@@ -48,6 +48,8 @@ local UnitEmpoweredChannelDuration = UnitEmpoweredChannelDuration
 local issecretvalue                = issecretvalue
 local IsInRaid                     = IsInRaid
 local GetNumGroupMembers           = GetNumGroupMembers
+local UnitInRaid                   = UnitInRaid
+local UnitIsUnit                   = UnitIsUnit
 local CreateFrame                  = CreateFrame
 local hooksecurefunc               = hooksecurefunc
 local UIParent                     = UIParent
@@ -59,6 +61,12 @@ local ELAPSED   = Enum.StatusBarTimerDirection.ElapsedTime
 local REMAINING = Enum.StatusBarTimerDirection.RemainingTime
 
 local SMALL_GROUP_SIZE = MEMBERS_PER_RAID_GROUP or 5
+
+local RAID_TOKENS = {}
+for i = 1, SMALL_GROUP_SIZE do RAID_TOKENS[i] = "raid" .. i end
+
+local selfUnit  = "player"
+local selfDirty = true
 
 local KIND_CAST    = 1
 local KIND_CHANNEL = 2
@@ -566,13 +574,44 @@ local function TryHooks()
     allHooked = hookedParty and hookedRaid and hookedStandard
 end
 
+local function ResolveSelf(inRaid, groupSize)
+    if not inRaid then return "player" end
+
+    local idx = UnitInRaid("player")
+    if not issecretvalue(idx) and idx then
+        local t = RAID_TOKENS[idx]
+        if t then return t end
+    end
+
+    for i = 1, groupSize do
+        local t = RAID_TOKENS[i]
+        if not t then break end
+        local r = UnitIsUnit(t, "player")
+        if not issecretvalue(r) and r then return t end
+    end
+
+    return nil
+end
+
 local function Scan()
     scanPending = false
     generation = generation + 1
 
     if not allHooked then TryHooks() end
 
-    if not (IsInRaid() and GetNumGroupMembers() > SMALL_GROUP_SIZE) then
+    local inRaid    = IsInRaid()
+    local groupSize = inRaid and GetNumGroupMembers() or 0
+
+    if not (inRaid and groupSize > SMALL_GROUP_SIZE) then
+        if selfDirty then
+            local s = ResolveSelf(inRaid, groupSize)
+            if s then
+                selfUnit  = s
+                selfDirty = false
+            end
+        end
+        local me = selfUnit
+
         local c = partyContainer
         if c and c:IsVisible() then
             local frames = c.memberUnitFrames
@@ -580,7 +619,7 @@ local function Scan()
                 for i = 1, #frames do
                     local frame = frames[i]
                     local unit  = frame.unit
-                    if unit then Bind(frame, unit) end
+                    if unit and unit ~= "player" and unit ~= me then Bind(frame, unit) end
                 end
             end
         end
@@ -593,7 +632,7 @@ local function Scan()
                 for i = 1, #frames do
                     local frame = frames[i]
                     local unit = frame.unit
-                    if unit then Bind(frame, unit) end
+                    if unit and unit ~= "player" and unit ~= me then Bind(frame, unit) end
                 end
             end
         end
@@ -628,6 +667,8 @@ ScheduleScan = function()
 end
 
 local function OnGroupEvent(self, event)
+    selfDirty = true
+
     if event == "PLAYER_ENTERING_WORLD" then
         forceResync = true
         After(2, ScheduleScan)
