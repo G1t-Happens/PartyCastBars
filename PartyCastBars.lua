@@ -133,6 +133,8 @@ PCB_FONT:SetJustifyV("MIDDLE")
 
 local partyMemberFrames    = {}
 local numPartyMemberFrames = 0
+local poolVis
+local memberVis
 
 local function SnapshotPartyPool(f)
     local pool = f and f.PartyMemberFramePool
@@ -143,6 +145,7 @@ local function SnapshotPartyPool(f)
         partyMemberFrames[n] = frame
     end
     numPartyMemberFrames = n
+    if n > 0 then poolVis = partyMemberFrames[1].IsVisible end
 end
 
 local Sweep, ScheduleScan
@@ -527,6 +530,7 @@ end
 
 local hookedParty, hookedRaid, hookedStandard, allHooked
 local partyContainer, raidContainer, standardParty
+local partyVis, raidVis, standardVis
 
 local function TryHooks()
     if not hookedParty then
@@ -534,6 +538,7 @@ local function TryHooks()
         if f then
             hookedParty    = true
             partyContainer = f
+            partyVis       = f.IsVisible
             hooksecurefunc(f, "RefreshMembers", ScheduleScan)
         end
     end
@@ -543,6 +548,7 @@ local function TryHooks()
         if f then
             hookedRaid    = true
             raidContainer = f
+            raidVis       = f.IsVisible
             hooksecurefunc(f, "LayoutFrames", ScheduleScan)
         end
     end
@@ -552,6 +558,7 @@ local function TryHooks()
         if f then
             hookedStandard = true
             standardParty  = f
+            standardVis    = f.IsVisible
             hooksecurefunc(f, "UpdatePartyFrames", ScheduleScan)
 
             if f.InitializePartyMemberFrames then
@@ -605,19 +612,29 @@ local function Scan()
         local me = selfUnit
 
         local c = partyContainer
-        if c and c:IsVisible() then
+        if c and partyVis(c) then
             local frames = c.memberUnitFrames
             if frames then
-                for i = 1, #frames do
-                    local frame = frames[i]
-                    local unit  = frame.unit
-                    if unit and unit ~= me and frame:IsVisible() then Bind(frame, unit, g) end
+                local vis = memberVis
+                if not vis then
+                    local f1 = frames[1]
+                    if f1 then
+                        vis       = f1.IsVisible
+                        memberVis = vis
+                    end
+                end
+                if vis then
+                    for i = 1, #frames do
+                        local frame = frames[i]
+                        local unit  = frame.unit
+                        if unit and unit ~= me and vis(frame) then Bind(frame, unit, g) end
+                    end
                 end
             end
         end
 
         c = raidContainer
-        if c and c:IsVisible() then
+        if c and raidVis(c) then
             local frames = c.frameUpdateList
             frames = frames and frames.normal
             if frames then
@@ -630,12 +647,13 @@ local function Scan()
         end
 
         local p = standardParty
-        if p and p:IsVisible() then
+        if p and standardVis(p) then
             local pmf = partyMemberFrames
+            local vis = poolVis
             for i = 1, numPartyMemberFrames do
                 local frame = pmf[i]
                 local unit  = frame.unitToken
-                if unit and frame:IsVisible() then Bind(frame, unit, g) end
+                if unit and vis(frame) then Bind(frame, unit, g) end
             end
         end
     end
