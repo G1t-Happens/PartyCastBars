@@ -67,6 +67,8 @@ for i = 1, SMALL_GROUP_SIZE do RAID_TOKENS[i] = "raid" .. i end
 
 local selfUnit  = "player"
 local selfDirty = true
+local inRaid    = false
+local groupSize = 0
 
 local ANCHOR_X = BAR_X_OFFSET
 
@@ -589,17 +591,17 @@ local function Scan()
 
     if not allHooked then TryHooks() end
 
-    local inRaid    = IsInRaid()
-    local groupSize = inRaid and GetNumGroupMembers() or 0
+    if selfDirty then
+        inRaid    = IsInRaid()
+        groupSize = inRaid and GetNumGroupMembers() or 0
+        local s = ResolveSelf(inRaid, groupSize)
+        if s then
+            selfUnit  = s
+            selfDirty = false
+        end
+    end
 
     if not (inRaid and groupSize > SMALL_GROUP_SIZE) then
-        if selfDirty then
-            local s = ResolveSelf(inRaid, groupSize)
-            if s then
-                selfUnit  = s
-                selfDirty = false
-            end
-        end
         local me = selfUnit
 
         local c = partyContainer
