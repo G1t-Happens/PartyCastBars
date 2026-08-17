@@ -205,7 +205,7 @@ local function CastFull(bar)
     SetText(bar.text, name)
     SetTexture(bar.icon, texture)
 
-    SetTimerDuration(bar, duration, IMMEDIATE, ELAPSED)
+    SetTimerDuration(bar, duration)
 
     local slot = bar.slot
     if slot then
@@ -240,7 +240,7 @@ local function CastDelayed(bar)
 
     local d = UnitCastingDuration(bar.unit)
     if d then
-        SetTimerDuration(bar, d, IMMEDIATE, ELAPSED)
+        SetTimerDuration(bar, d)
     else
         return HideBar(bar)
     end
