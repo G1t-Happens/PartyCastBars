@@ -141,12 +141,12 @@ end
 
 local Sweep, ScheduleScan
 
-local function ShowBar(bar, kind)
+local function ShowBar(bar, kind, unit)
     local n = activeCount + 1
     activeCount = n
 
     active[n]     = bar
-    activeUnit[n] = bar.unit
+    activeUnit[n] = unit
     activeKind[n] = kind
     bar.slot      = n
 
@@ -158,15 +158,17 @@ local function ShowBar(bar, kind)
 end
 
 local function HideBar(bar)
-    local a, au, ak = active, activeUnit, activeKind
     local slot = bar.slot
     local n    = activeCount
 
-    local last = a[n]
-    a[slot]   = last
-    au[slot]  = au[n]
-    ak[slot]  = ak[n]
-    last.slot = slot
+    if slot ~= n then
+        local a, au, ak = active, activeUnit, activeKind
+        local last = a[n]
+        a[slot]   = last
+        au[slot]  = au[n]
+        ak[slot]  = ak[n]
+        last.slot = slot
+    end
     activeCount = n - 1
 
     bar.slot = nil
@@ -221,7 +223,7 @@ local function CastFull(bar)
     if slot then
         activeKind[slot] = KIND_CAST
     else
-        ShowBar(bar, KIND_CAST)
+        ShowBar(bar, KIND_CAST, unit)
     end
 end
 
@@ -300,7 +302,7 @@ local function ChannelDraw(bar, empowered)
     if slot then
         activeKind[slot] = kind
     else
-        ShowBar(bar, kind)
+        ShowBar(bar, kind, unit)
     end
 end
 
@@ -407,13 +409,16 @@ end
 local function Unbind(bar)
     local slot = bar.boundSlot
     if not slot then return end
-    local b    = bound
-    local n    = boundCount
-    local last = b[n]
-    b[slot]        = last
-    last.boundSlot = slot
-    boundCount     = n - 1
-    bar.boundSlot  = nil
+    local n = boundCount
+
+    if slot ~= n then
+        local b    = bound
+        local last = b[n]
+        b[slot]        = last
+        last.boundSlot = slot
+    end
+    boundCount    = n - 1
+    bar.boundSlot = nil
 end
 
 local function ReleaseBar(bar)
