@@ -68,10 +68,6 @@ for i = 1, SMALL_GROUP_SIZE do RAID_TOKENS[i] = "raid" .. i end
 local selfUnit  = "player"
 local selfDirty = true
 
-local KIND_CAST    = 1
-local KIND_CHANNEL = 2
-local KIND_EMPOWER = 3
-
 local ANCHOR_X = BAR_X_OFFSET
 
 local BORDER_X  = REF_BORDER_X * FRAME_SCALE
@@ -149,22 +145,6 @@ end
 
 local Sweep, ScheduleScan
 
-local function ShowBar(bar, kind, unit)
-    local n = activeCount + 1
-    activeCount = n
-
-    active[n]     = bar
-    activeUnit[n] = unit
-    activeKind[n] = kind
-    bar.slot      = n
-
-    Frame_Show(bar)
-
-    if not watchdog then
-        watchdog = NewTicker(WATCHDOG_PERIOD, Sweep)
-    end
-end
-
 local function HideBar(bar)
     local slot = bar.slot
     local n    = activeCount
@@ -195,13 +175,13 @@ local function CastFull(bar)
     local unit = bar.unit
     local name, _, texture, _, _, _, _, notInterruptible = UnitCastingInfo(unit)
     if not name then
-        if bar.slot and not bar.channeling then HideBar(bar) end
+        if bar.slot and not bar.channeling then return HideBar(bar) end
         return
     end
 
     local duration = UnitCastingDuration(unit)
     if not duration then
-        if bar.slot and not bar.channeling then HideBar(bar) end
+        if bar.slot and not bar.channeling then return HideBar(bar) end
         return
     end
 
@@ -229,32 +209,40 @@ local function CastFull(bar)
 
     local slot = bar.slot
     if slot then
-        activeKind[slot] = KIND_CAST
+        activeKind[slot] = 1
     else
-        ShowBar(bar, KIND_CAST, unit)
+        local n = activeCount + 1
+        activeCount   = n
+        active[n]     = bar
+        activeUnit[n] = unit
+        activeKind[n] = 1
+        bar.slot      = n
+        Frame_Show(bar)
+        if not watchdog then
+            watchdog = NewTicker(WATCHDOG_PERIOD, Sweep)
+        end
     end
 end
 
 local function CastStopProbe(bar)
     if UnitCastingDuration(bar.unit) then
-        if not bar.slot then CastFull(bar) end
+        if not bar.slot then return CastFull(bar) end
         return
     end
 
-    if bar.slot and not bar.channeling then HideBar(bar) end
+    if bar.slot and not bar.channeling then return HideBar(bar) end
 end
 
 local function CastDelayed(bar)
     if not bar.slot or bar.channeling then
-        CastFull(bar)
-        return
+        return CastFull(bar)
     end
 
     local d = UnitCastingDuration(bar.unit)
     if d then
         SetTimerDuration(bar, d, IMMEDIATE, ELAPSED)
     else
-        HideBar(bar)
+        return HideBar(bar)
     end
 end
 
@@ -262,7 +250,7 @@ local function ChannelDraw(bar, empowered)
     local unit = bar.unit
     local name, _, texture, _, _, _, notInterruptible, _, isEmpowered = UnitChannelInfo(unit)
     if not name then
-        if bar.slot and bar.channeling then HideBar(bar) end
+        if bar.slot and bar.channeling then return HideBar(bar) end
         return
     end
 
@@ -272,15 +260,15 @@ local function ChannelDraw(bar, empowered)
     if empowered then
         duration  = UnitEmpoweredChannelDuration(unit)
         direction = ELAPSED
-        kind      = KIND_EMPOWER
+        kind      = 3
     else
         duration  = UnitChannelDuration(unit)
         direction = REMAINING
-        kind      = KIND_CHANNEL
+        kind      = 2
     end
 
     if not duration then
-        if bar.slot and bar.channeling then HideBar(bar) end
+        if bar.slot and bar.channeling then return HideBar(bar) end
         return
     end
 
@@ -310,7 +298,16 @@ local function ChannelDraw(bar, empowered)
     if slot then
         activeKind[slot] = kind
     else
-        ShowBar(bar, kind, unit)
+        local n = activeCount + 1
+        activeCount   = n
+        active[n]     = bar
+        activeUnit[n] = unit
+        activeKind[n] = kind
+        bar.slot      = n
+        Frame_Show(bar)
+        if not watchdog then
+            watchdog = NewTicker(WATCHDOG_PERIOD, Sweep)
+        end
     end
 end
 
@@ -325,16 +322,15 @@ local function ChannelUpdate(bar, empowered)
     if empowered then
         d         = UnitEmpoweredChannelDuration(unit)
         direction = ELAPSED
-        kind      = KIND_EMPOWER
+        kind      = 3
     else
         d         = UnitChannelDuration(unit)
         direction = REMAINING
-        kind      = KIND_CHANNEL
+        kind      = 2
     end
 
     if not d then
-        HideBar(bar)
-        return
+        return HideBar(bar)
     end
 
     activeKind[slot] = kind
@@ -351,11 +347,11 @@ local function ChannelStop(bar, empowered)
     end
 
     if d then
-        if not bar.slot then ChannelDraw(bar, empowered) end
+        if not bar.slot then return ChannelDraw(bar, empowered) end
         return
     end
 
-    if bar.slot and bar.channeling then HideBar(bar) end
+    if bar.slot and bar.channeling then return HideBar(bar) end
 end
 
 local function BarEvent(bar, event)
@@ -387,30 +383,25 @@ local function Resync(bar)
 end
 
 Sweep = function()
-    local a, au, ak = active, activeUnit, activeKind
+    local au, ak = activeUnit, activeKind
 
     for i = activeCount, 1, -1 do
         local unit = au[i]
         local kind = ak[i]
 
-        if kind == KIND_CAST then
+        if kind == 1 then
             if not UnitCastingDuration(unit) and not UnitCastingInfo(unit) then
-                HideBar(a[i])
+                HideBar(active[i])
             end
-        elseif kind == KIND_CHANNEL then
+        elseif kind == 2 then
             if not UnitChannelDuration(unit) and not UnitChannelInfo(unit) then
-                HideBar(a[i])
+                HideBar(active[i])
             end
         else
             if not UnitEmpoweredChannelDuration(unit) and not UnitChannelInfo(unit) then
-                HideBar(a[i])
+                HideBar(active[i])
             end
         end
-    end
-
-    if activeCount == 0 and watchdog then
-        watchdog:Cancel()
-        watchdog = nil
     end
 end
 
@@ -499,11 +490,9 @@ local function CreateBar(owner)
     return bar
 end
 
-local function Bind(owner, unit)
-    if not unit or not owner:IsVisible() then return end
-
+local function Bind(owner, unit, g)
     local bar = bars[owner] or CreateBar(owner)
-    bar.generation = generation
+    bar.generation = g
 
     if not bar.boundSlot then
         local n = boundCount + 1
@@ -595,7 +584,8 @@ end
 
 local function Scan()
     scanPending = false
-    generation = generation + 1
+    local g = generation + 1
+    generation = g
 
     if not allHooked then TryHooks() end
 
@@ -619,7 +609,7 @@ local function Scan()
                 for i = 1, #frames do
                     local frame = frames[i]
                     local unit  = frame.unit
-                    if unit and unit ~= "player" and unit ~= me then Bind(frame, unit) end
+                    if unit and unit ~= me and frame:IsVisible() then Bind(frame, unit, g) end
                 end
             end
         end
@@ -632,7 +622,7 @@ local function Scan()
                 for i = 1, #frames do
                     local frame = frames[i]
                     local unit = frame.unit
-                    if unit and unit ~= "player" and unit ~= me then Bind(frame, unit) end
+                    if unit and unit ~= me and frame:IsVisible() then Bind(frame, unit, g) end
                 end
             end
         end
@@ -643,13 +633,12 @@ local function Scan()
             for i = 1, numPartyMemberFrames do
                 local frame = pmf[i]
                 local unit  = frame.unitToken
-                if unit then Bind(frame, unit) end
+                if unit and frame:IsVisible() then Bind(frame, unit, g) end
             end
         end
     end
 
     local bnd = bound
-    local g   = generation
     for i = boundCount, 1, -1 do
         local b = bnd[i]
         if b.generation ~= g then
