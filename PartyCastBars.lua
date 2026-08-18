@@ -201,27 +201,6 @@ local function CastFull(bar)
     end
 end
 
-local function CastStopProbe(bar)
-    if bar.slot then
-        if bar.channeling then return end
-        if UnitCastingDuration(bar.unit) then return end
-        return HideBar(bar)
-    end
-    if UnitCastingDuration(bar.unit) then return CastFull(bar) end
-end
-
-local function CastDelayed(bar)
-    if not bar.slot or bar.channeling then
-        return CastFull(bar)
-    end
-    local d = UnitCastingDuration(bar.unit)
-    if d then
-        SetTimerDuration(bar, d)
-    else
-        return HideBar(bar)
-    end
-end
-
 local function ChannelDraw(bar, empowered)
     local unit = bar.unit
     local name, _, texture, _, _, _, notInterruptible, _, isEmpowered = UnitChannelInfo(unit)
@@ -279,53 +258,136 @@ local function ChannelDraw(bar, empowered)
     end
 end
 
-local function ChannelDrawCast(bar) return ChannelDraw(bar, false) end
-local function ChannelDrawEmp(bar)  return ChannelDraw(bar, true)  end
-
-local function ChannelUpdateCast(bar)
-    local slot = bar.slot
-    if not slot or not bar.channeling then return ChannelDraw(bar, false) end
-    local d = UnitChannelDuration(bar.unit)
-    if not d then return HideBar(bar) end
-    activeProbe[slot] = UnitChannelDuration
-    SetTimerDuration(bar, d, IMMEDIATE, REMAINING)
-end
-
-local function ChannelUpdateEmp(bar)
-    local slot = bar.slot
-    if not slot or not bar.channeling then return ChannelDraw(bar, true) end
-    local d = UnitEmpoweredChannelDuration(bar.unit)
-    if not d then return HideBar(bar) end
-    activeProbe[slot] = UnitEmpoweredChannelDuration
-    SetTimerDuration(bar, d, IMMEDIATE, ELAPSED)
-end
-
-local function ChannelStopCast(bar)
-    if UnitChannelDuration(bar.unit) then
-        if not bar.slot then return ChannelDraw(bar, false) end
+local function BarEvent(bar, event)
+    if event == "UNIT_SPELLCAST_STOP" then
+        if bar.slot then
+            if bar.channeling then return end
+            if UnitCastingDuration(bar.unit) then return end
+            return HideBar(bar)
+        end
+        if UnitCastingDuration(bar.unit) then return CastFull(bar) end
         return
     end
-    if bar.slot and bar.channeling then return HideBar(bar) end
-end
-
-local function ChannelStopEmp(bar)
-    if UnitEmpoweredChannelDuration(bar.unit) then
-        if not bar.slot then return ChannelDraw(bar, true) end
+    if event == "UNIT_SPELLCAST_START" then
+        local unit = bar.unit
+        local name, _, texture, _, _, _, _, notInterruptible = UnitCastingInfo(unit)
+        if not name then
+            if bar.slot and not bar.channeling then return HideBar(bar) end
+            return
+        end
+        local duration = UnitCastingDuration(unit)
+        if not duration then
+            if bar.slot and not bar.channeling then return HideBar(bar) end
+            return
+        end
+        bar.channeling = false
+        if issecretvalue(notInterruptible) then
+            bar.locked = nil
+            SetVertexColorFromBoolean(bar.fill, notInterruptible, LOCKED_COLOR, CAST_COLOR)
+            SetAlphaFromBoolean(bar.shield, notInterruptible, 1, 0)
+            SetAlphaFromBoolean(bar.border, notInterruptible, 0, 1)
+        elseif notInterruptible then
+            bar.locked = true
+            SetVertexColor(bar.fill, LOCK_R, LOCK_G, LOCK_B, LOCK_A)
+            SetAlpha(bar.shield, 1)
+            SetAlpha(bar.border, 0)
+        else
+            bar.locked = false
+            SetVertexColor(bar.fill, CAST_R, CAST_G, CAST_B, CAST_A)
+            SetAlpha(bar.shield, 0)
+            SetAlpha(bar.border, 1)
+        end
+        SetText(bar.text, name)
+        SetTexture(bar.icon, texture)
+        SetTimerDuration(bar, duration)
+        local slot = bar.slot
+        if slot then
+            activeProbe[slot] = UnitCastingDuration
+        else
+            local n = activeCount + 1
+            activeCount    = n
+            active[n]      = bar
+            activeUnit[n]  = unit
+            activeProbe[n] = UnitCastingDuration
+            bar.slot       = n
+            Frame_Show(bar)
+            if not watchdog then watchdog = NewTicker(WATCHDOG_PERIOD, Sweep) end
+        end
         return
     end
-    if bar.slot and bar.channeling then return HideBar(bar) end
-end
-
-local function NotInterruptible(bar)
-    if bar.locked then return end
-    if not bar.slot then return end
-    bar.locked = true
-    SetVertexColor(bar.fill, LOCK_R, LOCK_G, LOCK_B, LOCK_A)
-    SetAlpha(bar.shield, 1)
-    SetAlpha(bar.border, 0)
-end
-
-local function Interruptible(bar)
+    if event == "UNIT_SPELLCAST_FAILED" then
+        if bar.slot then
+            if bar.channeling then return end
+            if UnitCastingDuration(bar.unit) then return end
+            return HideBar(bar)
+        end
+        if UnitCastingDuration(bar.unit) then return CastFull(bar) end
+        return
+    end
+    if event == "UNIT_SPELLCAST_CHANNEL_UPDATE" then
+        local slot = bar.slot
+        if not slot or not bar.channeling then return ChannelDraw(bar, false) end
+        local d = UnitChannelDuration(bar.unit)
+        if not d then return HideBar(bar) end
+        activeProbe[slot] = UnitChannelDuration
+        SetTimerDuration(bar, d, IMMEDIATE, REMAINING)
+        return
+    end
+    if event == "UNIT_SPELLCAST_EMPOWER_UPDATE" then
+        local slot = bar.slot
+        if not slot or not bar.channeling then return ChannelDraw(bar, true) end
+        local d = UnitEmpoweredChannelDuration(bar.unit)
+        if not d then return HideBar(bar) end
+        activeProbe[slot] = UnitEmpoweredChannelDuration
+        SetTimerDuration(bar, d, IMMEDIATE, ELAPSED)
+        return
+    end
+    if event == "UNIT_SPELLCAST_DELAYED" then
+        if not bar.slot or bar.channeling then return CastFull(bar) end
+        local d = UnitCastingDuration(bar.unit)
+        if d then
+            SetTimerDuration(bar, d)
+        else
+            return HideBar(bar)
+        end
+        return
+    end
+    if event == "UNIT_SPELLCAST_CHANNEL_START" then return ChannelDraw(bar, false) end
+    if event == "UNIT_SPELLCAST_CHANNEL_STOP" then
+        if UnitChannelDuration(bar.unit) then
+            if not bar.slot then return ChannelDraw(bar, false) end
+            return
+        end
+        if bar.slot and bar.channeling then return HideBar(bar) end
+        return
+    end
+    if event == "UNIT_SPELLCAST_EMPOWER_STOP" then
+        if UnitEmpoweredChannelDuration(bar.unit) then
+            if not bar.slot then return ChannelDraw(bar, true) end
+            return
+        end
+        if bar.slot and bar.channeling then return HideBar(bar) end
+        return
+    end
+    if event == "UNIT_SPELLCAST_EMPOWER_START" then return ChannelDraw(bar, true) end
+    if event == "UNIT_SPELLCAST_INTERRUPTED" then
+        if bar.slot then
+            if bar.channeling then return end
+            if UnitCastingDuration(bar.unit) then return end
+            return HideBar(bar)
+        end
+        if UnitCastingDuration(bar.unit) then return CastFull(bar) end
+        return
+    end
+    if event == "UNIT_SPELLCAST_NOT_INTERRUPTIBLE" then
+        if bar.locked then return end
+        if not bar.slot then return end
+        bar.locked = true
+        SetVertexColor(bar.fill, LOCK_R, LOCK_G, LOCK_B, LOCK_A)
+        SetAlpha(bar.shield, 1)
+        SetAlpha(bar.border, 0)
+        return
+    end
     if bar.locked == false then return end
     if not bar.slot then return end
     bar.locked = false
@@ -336,25 +398,6 @@ local function Interruptible(bar)
     end
     SetAlpha(bar.shield, 0)
     SetAlpha(bar.border, 1)
-end
-
-local HANDLERS = {
-    UNIT_SPELLCAST_INTERRUPTIBLE     = Interruptible,
-    UNIT_SPELLCAST_NOT_INTERRUPTIBLE = NotInterruptible,
-    UNIT_SPELLCAST_START          = CastFull,
-    UNIT_SPELLCAST_DELAYED        = CastDelayed,
-    UNIT_SPELLCAST_STOP           = CastStopProbe,
-    UNIT_SPELLCAST_FAILED         = CastStopProbe,
-    UNIT_SPELLCAST_INTERRUPTED    = CastStopProbe,
-    UNIT_SPELLCAST_CHANNEL_START  = ChannelDrawCast,
-    UNIT_SPELLCAST_CHANNEL_UPDATE = ChannelUpdateCast,
-    UNIT_SPELLCAST_CHANNEL_STOP   = ChannelStopCast,
-    UNIT_SPELLCAST_EMPOWER_START  = ChannelDrawEmp,
-    UNIT_SPELLCAST_EMPOWER_UPDATE = ChannelUpdateEmp,
-    UNIT_SPELLCAST_EMPOWER_STOP   = ChannelStopEmp,
-}
-local function BarEvent(bar, event)
-    return HANDLERS[event](bar)
 end
 
 local function Resync(bar)
