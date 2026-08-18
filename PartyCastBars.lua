@@ -6,19 +6,16 @@ local BAR_STRATA       = "HIGH"
 local BAR_LEVEL        = 60
 local ANCHOR_POINT     = "BOTTOM"
 local ANCHOR_RELPOINT  = "TOP"
-
 local MEDIA            = "Interface\\AddOns\\PartyCastBars\\textures\\"
 local BAR_TEXTURE      = MEDIA .. "UI-StatusBar"
 local CAST_COLOR       = CreateColor(1.0, 0.7, 0.0, 1)
 local CHANNEL_COLOR    = CreateColor(0.0, 1.0, 0.0, 1)
 local LOCKED_COLOR     = CreateColor(0.7, 0.7, 0.7, 1)
 local BG_R, BG_G, BG_B, BG_A = 0.0, 0.0, 0.0, 0.5
-
 local BORDER_TEXTURE   = MEDIA .. "UI-CastingBar-Border-Small"
 local SHIELD_TEXTURE   = MEDIA .. "UI-CastingBar-Small-Shield"
 local FRAME_SCALE      = BAR_WIDTH / 150
 local FRAME_HEIGHT     = 1.18
-
 local REF_BORDER_H     = 56
 local REF_BORDER_X     = 23
 local REF_SHIELD_H     = 56
@@ -27,17 +24,14 @@ local REF_SHIELD_R     = 18
 local REF_SHIELD_W     = 196
 local REF_BAY_CENTRE   = 15
 local REF_ICON_SIZE    = 16
-
 local FONT             = STANDARD_TEXT_FONT or "Fonts\\FRIZQT__.TTF"
 local FONT_SIZE        = 9
 local FONT_FLAGS       = "OUTLINE"
 local TEXT_PADDING     = 2
 local TEXT_Y_OFFSET    = 0.5
-
 local ICON_SCALE       = 1.25
 local ICON_NUDGE_X     = 0
 local ICON_NUDGE_Y     = 0
-
 local WATCHDOG_PERIOD  = 0.2
 
 local UnitCastingInfo              = UnitCastingInfo
@@ -55,35 +49,27 @@ local hooksecurefunc               = hooksecurefunc
 local UIParent                     = UIParent
 local After                        = C_Timer.After
 local NewTicker                    = C_Timer.NewTicker
-
 local IMMEDIATE = Enum.StatusBarInterpolation.Immediate
 local ELAPSED   = Enum.StatusBarTimerDirection.ElapsedTime
 local REMAINING = Enum.StatusBarTimerDirection.RemainingTime
-
 local SMALL_GROUP_SIZE = MEMBERS_PER_RAID_GROUP or 5
-
 local RAID_TOKENS = {}
 for i = 1, SMALL_GROUP_SIZE do RAID_TOKENS[i] = "raid" .. i end
-
 local selfUnit  = "player"
 local selfDirty = true
 local inRaid    = false
 local groupSize = 0
-
-local ANCHOR_X = BAR_X_OFFSET
-
+local ANCHOR_X  = BAR_X_OFFSET
 local BORDER_X  = REF_BORDER_X * FRAME_SCALE
 local SHIELD_XL = REF_SHIELD_L * FRAME_SCALE
 local SHIELD_XR = REF_SHIELD_R * FRAME_SCALE
 local BORDER_H  = REF_BORDER_H * FRAME_SCALE * FRAME_HEIGHT
 local SHIELD_H  = REF_SHIELD_H * FRAME_SCALE * FRAME_HEIGHT
-
 local SHIELD_W    = BAR_WIDTH + SHIELD_XL + SHIELD_XR
 local ICON_SIZE   = SHIELD_W * (REF_ICON_SIZE / REF_SHIELD_W) * ICON_SCALE
 local ICON_CENTRE = SHIELD_W * (REF_BAY_CENTRE / REF_SHIELD_W) - SHIELD_XL
 local ICON_X      = ICON_CENTRE + ICON_SIZE * 0.5 + ICON_NUDGE_X
 local ICON_Y      = ICON_NUDGE_Y
-
 local CAST_R, CAST_G, CAST_B, CAST_A = CAST_COLOR:GetRGBA()
 local CHAN_R, CHAN_G, CHAN_B, CHAN_A = CHANNEL_COLOR:GetRGBA()
 local LOCK_R, LOCK_G, LOCK_B, LOCK_A = LOCKED_COLOR:GetRGBA()
@@ -91,12 +77,10 @@ local LOCK_R, LOCK_G, LOCK_B, LOCK_A = LOCKED_COLOR:GetRGBA()
 local bars        = {}
 local bound       = {}
 local boundCount  = 0
-
 local active      = {}
 local activeUnit  = {}
-local activeKind  = {}
+local activeProbe = {}
 local activeCount = 0
-
 local watchdog
 local generation  = 0
 local scanPending = false
@@ -104,13 +88,11 @@ local forceResync = false
 
 local PCB = CreateFrame("StatusBar")
 PCB:Hide()
-
 local Frame_Show          = PCB.Show
 local Frame_Hide          = PCB.Hide
 local SetTimerDuration    = PCB.SetTimerDuration
 local RegisterUnitEvent   = PCB.RegisterUnitEvent
-local UnregisterAllEvents = PCB.UnregisterAllEvents
-
+local SetScript           = PCB.SetScript
 local SetAlpha, SetAlphaFromBoolean, SetVertexColor, SetVertexColorFromBoolean, SetTexture
 do
     local tex = PCB:CreateTexture()
@@ -120,9 +102,7 @@ do
     SetVertexColorFromBoolean = tex.SetVertexColorFromBoolean
     SetTexture                = tex.SetTexture
 end
-
 local SetText = PCB:CreateFontString().SetText
-
 local PCB_FONT = CreateFont("PartyCastBarsNameFont")
 if GameFontHighlightSmall then PCB_FONT:SetFontObject(GameFontHighlightSmall) end
 PCB_FONT:SetFont(FONT, FONT_SIZE, FONT_FLAGS)
@@ -135,6 +115,7 @@ local partyMemberFrames    = {}
 local numPartyMemberFrames = 0
 local poolVis
 local memberVis
+local raidMemberVis
 
 local function SnapshotPartyPool(f)
     local pool = f and f.PartyMemberFramePool
@@ -153,20 +134,17 @@ local Sweep, ScheduleScan
 local function HideBar(bar)
     local slot = bar.slot
     local n    = activeCount
-
     if slot ~= n then
-        local a, au, ak = active, activeUnit, activeKind
+        local a, au, ap = active, activeUnit, activeProbe
         local last = a[n]
         a[slot]   = last
         au[slot]  = au[n]
-        ak[slot]  = ak[n]
+        ap[slot]  = ap[n]
         last.slot = slot
     end
     activeCount = n - 1
-
     bar.slot = nil
     Frame_Hide(bar)
-
     if n == 1 then
         local w = watchdog
         if w then
@@ -183,66 +161,59 @@ local function CastFull(bar)
         if bar.slot and not bar.channeling then return HideBar(bar) end
         return
     end
-
     local duration = UnitCastingDuration(unit)
     if not duration then
         if bar.slot and not bar.channeling then return HideBar(bar) end
         return
     end
-
     bar.channeling = false
-
-    local fill = bar.fill
     if issecretvalue(notInterruptible) then
-        SetVertexColorFromBoolean(fill, notInterruptible, LOCKED_COLOR, CAST_COLOR)
+        bar.locked = nil
+        SetVertexColorFromBoolean(bar.fill, notInterruptible, LOCKED_COLOR, CAST_COLOR)
         SetAlphaFromBoolean(bar.shield, notInterruptible, 1, 0)
         SetAlphaFromBoolean(bar.border, notInterruptible, 0, 1)
     elseif notInterruptible then
-        SetVertexColor(fill, LOCK_R, LOCK_G, LOCK_B, LOCK_A)
+        bar.locked = true
+        SetVertexColor(bar.fill, LOCK_R, LOCK_G, LOCK_B, LOCK_A)
         SetAlpha(bar.shield, 1)
         SetAlpha(bar.border, 0)
     else
-        SetVertexColor(fill, CAST_R, CAST_G, CAST_B, CAST_A)
+        bar.locked = false
+        SetVertexColor(bar.fill, CAST_R, CAST_G, CAST_B, CAST_A)
         SetAlpha(bar.shield, 0)
         SetAlpha(bar.border, 1)
     end
-
     SetText(bar.text, name)
     SetTexture(bar.icon, texture)
-
     SetTimerDuration(bar, duration)
-
     local slot = bar.slot
     if slot then
-        activeKind[slot] = 1
+        activeProbe[slot] = UnitCastingDuration
     else
         local n = activeCount + 1
-        activeCount   = n
-        active[n]     = bar
-        activeUnit[n] = unit
-        activeKind[n] = 1
-        bar.slot      = n
+        activeCount    = n
+        active[n]      = bar
+        activeUnit[n]  = unit
+        activeProbe[n] = UnitCastingDuration
+        bar.slot       = n
         Frame_Show(bar)
-        if not watchdog then
-            watchdog = NewTicker(WATCHDOG_PERIOD, Sweep)
-        end
+        if not watchdog then watchdog = NewTicker(WATCHDOG_PERIOD, Sweep) end
     end
 end
 
 local function CastStopProbe(bar)
-    if UnitCastingDuration(bar.unit) then
-        if not bar.slot then return CastFull(bar) end
-        return
+    if bar.slot then
+        if bar.channeling then return end
+        if UnitCastingDuration(bar.unit) then return end
+        return HideBar(bar)
     end
-
-    if bar.slot and not bar.channeling then return HideBar(bar) end
+    if UnitCastingDuration(bar.unit) then return CastFull(bar) end
 end
 
 local function CastDelayed(bar)
     if not bar.slot or bar.channeling then
         return CastFull(bar)
     end
-
     local d = UnitCastingDuration(bar.unit)
     if d then
         SetTimerDuration(bar, d)
@@ -258,128 +229,139 @@ local function ChannelDraw(bar, empowered)
         if bar.slot and bar.channeling then return HideBar(bar) end
         return
     end
-
     if empowered == nil then empowered = isEmpowered end
-
-    local duration, direction, kind
+    local duration, direction, probe
     if empowered then
         duration  = UnitEmpoweredChannelDuration(unit)
         direction = ELAPSED
-        kind      = 3
+        probe     = UnitEmpoweredChannelDuration
     else
         duration  = UnitChannelDuration(unit)
         direction = REMAINING
-        kind      = 2
+        probe     = UnitChannelDuration
     end
-
     if not duration then
         if bar.slot and bar.channeling then return HideBar(bar) end
         return
     end
-
     bar.channeling = true
-
-    local fill = bar.fill
     if issecretvalue(notInterruptible) then
-        SetVertexColorFromBoolean(fill, notInterruptible, LOCKED_COLOR, CHANNEL_COLOR)
+        bar.locked = nil
+        SetVertexColorFromBoolean(bar.fill, notInterruptible, LOCKED_COLOR, CHANNEL_COLOR)
         SetAlphaFromBoolean(bar.shield, notInterruptible, 1, 0)
         SetAlphaFromBoolean(bar.border, notInterruptible, 0, 1)
     elseif notInterruptible then
-        SetVertexColor(fill, LOCK_R, LOCK_G, LOCK_B, LOCK_A)
+        bar.locked = true
+        SetVertexColor(bar.fill, LOCK_R, LOCK_G, LOCK_B, LOCK_A)
         SetAlpha(bar.shield, 1)
         SetAlpha(bar.border, 0)
     else
-        SetVertexColor(fill, CHAN_R, CHAN_G, CHAN_B, CHAN_A)
+        bar.locked = false
+        SetVertexColor(bar.fill, CHAN_R, CHAN_G, CHAN_B, CHAN_A)
         SetAlpha(bar.shield, 0)
         SetAlpha(bar.border, 1)
     end
-
     SetText(bar.text, name)
     SetTexture(bar.icon, texture)
-
     SetTimerDuration(bar, duration, IMMEDIATE, direction)
-
     local slot = bar.slot
     if slot then
-        activeKind[slot] = kind
+        activeProbe[slot] = probe
     else
         local n = activeCount + 1
-        activeCount   = n
-        active[n]     = bar
-        activeUnit[n] = unit
-        activeKind[n] = kind
-        bar.slot      = n
+        activeCount    = n
+        active[n]      = bar
+        activeUnit[n]  = unit
+        activeProbe[n] = probe
+        bar.slot       = n
         Frame_Show(bar)
-        if not watchdog then
-            watchdog = NewTicker(WATCHDOG_PERIOD, Sweep)
-        end
+        if not watchdog then watchdog = NewTicker(WATCHDOG_PERIOD, Sweep) end
     end
 end
 
-local function ChannelUpdate(bar, empowered)
+local function ChannelDrawCast(bar) return ChannelDraw(bar, false) end
+local function ChannelDrawEmp(bar)  return ChannelDraw(bar, true)  end
+
+local function ChannelUpdateCast(bar)
     local slot = bar.slot
-    if not slot or not bar.channeling then
-        return ChannelDraw(bar, empowered)
-    end
-
-    local unit = bar.unit
-    local d, direction, kind
-    if empowered then
-        d         = UnitEmpoweredChannelDuration(unit)
-        direction = ELAPSED
-        kind      = 3
-    else
-        d         = UnitChannelDuration(unit)
-        direction = REMAINING
-        kind      = 2
-    end
-
-    if not d then
-        return HideBar(bar)
-    end
-
-    activeKind[slot] = kind
-    SetTimerDuration(bar, d, IMMEDIATE, direction)
+    if not slot or not bar.channeling then return ChannelDraw(bar, false) end
+    local d = UnitChannelDuration(bar.unit)
+    if not d then return HideBar(bar) end
+    activeProbe[slot] = UnitChannelDuration
+    SetTimerDuration(bar, d, IMMEDIATE, REMAINING)
 end
 
-local function ChannelStop(bar, empowered)
-    local unit = bar.unit
-    local d
-    if empowered then
-        d = UnitEmpoweredChannelDuration(unit)
-    else
-        d = UnitChannelDuration(unit)
-    end
+local function ChannelUpdateEmp(bar)
+    local slot = bar.slot
+    if not slot or not bar.channeling then return ChannelDraw(bar, true) end
+    local d = UnitEmpoweredChannelDuration(bar.unit)
+    if not d then return HideBar(bar) end
+    activeProbe[slot] = UnitEmpoweredChannelDuration
+    SetTimerDuration(bar, d, IMMEDIATE, ELAPSED)
+end
 
-    if d then
-        if not bar.slot then return ChannelDraw(bar, empowered) end
+local function ChannelStopCast(bar)
+    if UnitChannelDuration(bar.unit) then
+        if not bar.slot then return ChannelDraw(bar, false) end
         return
     end
-
     if bar.slot and bar.channeling then return HideBar(bar) end
 end
 
+local function ChannelStopEmp(bar)
+    if UnitEmpoweredChannelDuration(bar.unit) then
+        if not bar.slot then return ChannelDraw(bar, true) end
+        return
+    end
+    if bar.slot and bar.channeling then return HideBar(bar) end
+end
+
+local function NotInterruptible(bar)
+    if bar.locked then return end
+    if not bar.slot then return end
+    bar.locked = true
+    SetVertexColor(bar.fill, LOCK_R, LOCK_G, LOCK_B, LOCK_A)
+    SetAlpha(bar.shield, 1)
+    SetAlpha(bar.border, 0)
+end
+
+local function Interruptible(bar)
+    if bar.locked == false then return end
+    if not bar.slot then return end
+    bar.locked = false
+    if bar.channeling then
+        SetVertexColor(bar.fill, CHAN_R, CHAN_G, CHAN_B, CHAN_A)
+    else
+        SetVertexColor(bar.fill, CAST_R, CAST_G, CAST_B, CAST_A)
+    end
+    SetAlpha(bar.shield, 0)
+    SetAlpha(bar.border, 1)
+end
+
+local HANDLERS = {
+    UNIT_SPELLCAST_INTERRUPTIBLE     = Interruptible,
+    UNIT_SPELLCAST_NOT_INTERRUPTIBLE = NotInterruptible,
+    UNIT_SPELLCAST_START          = CastFull,
+    UNIT_SPELLCAST_DELAYED        = CastDelayed,
+    UNIT_SPELLCAST_STOP           = CastStopProbe,
+    UNIT_SPELLCAST_FAILED         = CastStopProbe,
+    UNIT_SPELLCAST_INTERRUPTED    = CastStopProbe,
+    UNIT_SPELLCAST_CHANNEL_START  = ChannelDrawCast,
+    UNIT_SPELLCAST_CHANNEL_UPDATE = ChannelUpdateCast,
+    UNIT_SPELLCAST_CHANNEL_STOP   = ChannelStopCast,
+    UNIT_SPELLCAST_EMPOWER_START  = ChannelDrawEmp,
+    UNIT_SPELLCAST_EMPOWER_UPDATE = ChannelUpdateEmp,
+    UNIT_SPELLCAST_EMPOWER_STOP   = ChannelStopEmp,
+}
 local function BarEvent(bar, event)
-    if event == "UNIT_SPELLCAST_FAILED"         then return CastStopProbe(bar) end
-    if event == "UNIT_SPELLCAST_STOP"           then return CastStopProbe(bar) end
-    if event == "UNIT_SPELLCAST_START"          then return CastFull(bar) end
-    if event == "UNIT_SPELLCAST_DELAYED"        then return CastDelayed(bar) end
-    if event == "UNIT_SPELLCAST_CHANNEL_START"  then return ChannelDraw(bar, false) end
-    if event == "UNIT_SPELLCAST_CHANNEL_STOP"   then return ChannelStop(bar, false) end
-    if event == "UNIT_SPELLCAST_CHANNEL_UPDATE" then return ChannelUpdate(bar, false) end
-    if event == "UNIT_SPELLCAST_INTERRUPTED"    then return CastStopProbe(bar) end
-    if event == "UNIT_SPELLCAST_EMPOWER_UPDATE" then return ChannelUpdate(bar, true) end
-    if event == "UNIT_SPELLCAST_EMPOWER_START"  then return ChannelDraw(bar, true) end
-    return ChannelStop(bar, true)
+    return HANDLERS[event](bar)
 end
 
 local function Resync(bar)
     local unit = bar.unit
-
     if UnitCastingDuration(unit) or bar.slot then
         CastFull(bar)
     end
-
     if not bar.slot then
         if UnitChannelDuration(unit) or UnitEmpoweredChannelDuration(unit) then
             ChannelDraw(bar)
@@ -388,23 +370,14 @@ local function Resync(bar)
 end
 
 Sweep = function()
-    local au, ak = activeUnit, activeKind
-
+    local au, ap = activeUnit, activeProbe
     for i = activeCount, 1, -1 do
-        local unit = au[i]
-        local kind = ak[i]
-
-        if kind == 1 then
-            if not UnitCastingDuration(unit) and not UnitCastingInfo(unit) then
-                HideBar(active[i])
-            end
-        elseif kind == 2 then
-            if not UnitChannelDuration(unit) and not UnitChannelInfo(unit) then
-                HideBar(active[i])
-            end
-        else
-            if not UnitEmpoweredChannelDuration(unit) and not UnitChannelInfo(unit) then
-                HideBar(active[i])
+        if not ap[i](au[i]) then
+            local bar = active[i]
+            if bar.channeling then
+                if not UnitChannelInfo(au[i]) then HideBar(bar) end
+            elseif not UnitCastingInfo(au[i]) then
+                HideBar(bar)
             end
         end
     end
@@ -414,7 +387,6 @@ local function Unbind(bar)
     local slot = bar.boundSlot
     if not slot then return end
     local n = boundCount
-
     if slot ~= n then
         local b    = bound
         local last = b[n]
@@ -429,7 +401,7 @@ local function ReleaseBar(bar)
     if bar.slot then HideBar(bar) end
     Unbind(bar)
     bar.unit = nil
-    UnregisterAllEvents(bar)
+    SetScript(bar, "OnEvent", nil)
 end
 
 local function OwnerHidden(frame)
@@ -449,26 +421,21 @@ local function CreateBar(owner)
     bar:SetMinMaxValues(0, 1)
     bar:SetStatusBarTexture(BAR_TEXTURE)
     bar.channeling = false
-
     bar.fill = bar:GetStatusBarTexture()
-
     local bg = bar:CreateTexture(nil, "BACKGROUND")
     bg:SetAllPoints()
     bg:SetColorTexture(BG_R, BG_G, BG_B, BG_A)
-
     local icon = bar:CreateTexture(nil, "OVERLAY", nil, 4)
     icon:SetTexCoord(0.07, 0.93, 0.07, 0.93)
     icon:SetSize(ICON_SIZE, ICON_SIZE)
     icon:SetPoint("RIGHT", bar, "LEFT", ICON_X, ICON_Y)
     bar.icon = icon
-
     local border = bar:CreateTexture(nil, "OVERLAY", nil, 1)
     border:SetTexture(BORDER_TEXTURE)
     border:SetHeight(BORDER_H)
     border:SetPoint("LEFT", bar, "LEFT", -BORDER_X, 0)
     border:SetPoint("RIGHT", bar, "RIGHT", BORDER_X, 0)
     bar.border = border
-
     local shield = bar:CreateTexture(nil, "OVERLAY", nil, 2)
     shield:SetTexture(SHIELD_TEXTURE)
     shield:SetHeight(SHIELD_H)
@@ -476,7 +443,6 @@ local function CreateBar(owner)
     shield:SetPoint("RIGHT", bar, "RIGHT", SHIELD_XR, 0)
     shield:SetAlpha(0)
     bar.shield = shield
-
     local text = bar:CreateFontString(nil, "OVERLAY")
     text:SetDrawLayer("OVERLAY", 5)
     text:SetFontObject(PCB_FONT)
@@ -484,13 +450,9 @@ local function CreateBar(owner)
     text:SetPoint("TOPLEFT", bar, "TOPLEFT", TEXT_PADDING, TEXT_Y_OFFSET)
     text:SetPoint("BOTTOMRIGHT", bar, "BOTTOMRIGHT", -TEXT_PADDING, TEXT_Y_OFFSET)
     bar.text = text
-
-    bar:SetScript("OnEvent", BarEvent)
     bar:Raise()
-
     owner:HookScript("OnHide", OwnerHidden)
     owner:HookScript("OnShow", ScheduleScan)
-
     bars[owner] = bar
     return bar
 end
@@ -498,30 +460,32 @@ end
 local function Bind(owner, unit, g)
     local bar = bars[owner] or CreateBar(owner)
     bar.generation = g
-
     if not bar.boundSlot then
         local n = boundCount + 1
         boundCount = n
         bound[n] = bar
         bar.boundSlot = n
     end
-
     if bar.unit ~= unit then
         if bar.slot then HideBar(bar) end
         bar.unit = unit
-
-        RegisterUnitEvent(bar, "UNIT_SPELLCAST_START",       unit)
-        RegisterUnitEvent(bar, "UNIT_SPELLCAST_DELAYED",     unit)
-        RegisterUnitEvent(bar, "UNIT_SPELLCAST_STOP",        unit)
-        RegisterUnitEvent(bar, "UNIT_SPELLCAST_FAILED",      unit)
-        RegisterUnitEvent(bar, "UNIT_SPELLCAST_INTERRUPTED", unit)
-        RegisterUnitEvent(bar, "UNIT_SPELLCAST_CHANNEL_START",  unit)
-        RegisterUnitEvent(bar, "UNIT_SPELLCAST_CHANNEL_UPDATE", unit)
-        RegisterUnitEvent(bar, "UNIT_SPELLCAST_CHANNEL_STOP",   unit)
-        RegisterUnitEvent(bar, "UNIT_SPELLCAST_EMPOWER_START",  unit)
-        RegisterUnitEvent(bar, "UNIT_SPELLCAST_EMPOWER_UPDATE", unit)
-        RegisterUnitEvent(bar, "UNIT_SPELLCAST_EMPOWER_STOP",   unit)
-
+        if bar.regUnit ~= unit then
+            bar.regUnit = unit
+            RegisterUnitEvent(bar, "UNIT_SPELLCAST_START",          unit)
+            RegisterUnitEvent(bar, "UNIT_SPELLCAST_DELAYED",        unit)
+            RegisterUnitEvent(bar, "UNIT_SPELLCAST_STOP",           unit)
+            RegisterUnitEvent(bar, "UNIT_SPELLCAST_FAILED",         unit)
+            RegisterUnitEvent(bar, "UNIT_SPELLCAST_INTERRUPTED",    unit)
+            RegisterUnitEvent(bar, "UNIT_SPELLCAST_CHANNEL_START",  unit)
+            RegisterUnitEvent(bar, "UNIT_SPELLCAST_CHANNEL_UPDATE", unit)
+            RegisterUnitEvent(bar, "UNIT_SPELLCAST_CHANNEL_STOP",   unit)
+            RegisterUnitEvent(bar, "UNIT_SPELLCAST_EMPOWER_START",  unit)
+            RegisterUnitEvent(bar, "UNIT_SPELLCAST_EMPOWER_UPDATE", unit)
+            RegisterUnitEvent(bar, "UNIT_SPELLCAST_EMPOWER_STOP",   unit)
+            RegisterUnitEvent(bar, "UNIT_SPELLCAST_INTERRUPTIBLE",     unit)
+            RegisterUnitEvent(bar, "UNIT_SPELLCAST_NOT_INTERRUPTIBLE", unit)
+        end
+        SetScript(bar, "OnEvent", BarEvent)
         Resync(bar)
     elseif forceResync then
         Resync(bar)
@@ -531,7 +495,6 @@ end
 local hookedParty, hookedRaid, hookedStandard, allHooked
 local partyContainer, raidContainer, standardParty
 local partyVis, raidVis, standardVis
-
 local function TryHooks()
     if not hookedParty then
         local f = CompactPartyFrame
@@ -542,7 +505,6 @@ local function TryHooks()
             hooksecurefunc(f, "RefreshMembers", ScheduleScan)
         end
     end
-
     if not hookedRaid then
         local f = CompactRaidFrameContainer
         if f then
@@ -552,7 +514,6 @@ local function TryHooks()
             hooksecurefunc(f, "LayoutFrames", ScheduleScan)
         end
     end
-
     if not hookedStandard then
         local f = PartyFrame
         if f then
@@ -560,34 +521,28 @@ local function TryHooks()
             standardParty  = f
             standardVis    = f.IsVisible
             hooksecurefunc(f, "UpdatePartyFrames", ScheduleScan)
-
             if f.InitializePartyMemberFrames then
                 hooksecurefunc(f, "InitializePartyMemberFrames", SnapshotPartyPool)
             end
-
             SnapshotPartyPool(f)
         end
     end
-
     allHooked = hookedParty and hookedRaid and hookedStandard
 end
 
 local function ResolveSelf(inRaid, groupSize)
     if not inRaid then return "player" end
-
     local idx = UnitInRaid("player")
     if not issecretvalue(idx) and idx then
         local t = RAID_TOKENS[idx]
         if t then return t end
     end
-
     for i = 1, groupSize do
         local t = RAID_TOKENS[i]
         if not t then break end
         local r = UnitIsUnit(t, "player")
         if not issecretvalue(r) and r then return t end
     end
-
     return nil
 end
 
@@ -595,9 +550,7 @@ local function Scan()
     scanPending = false
     local g = generation + 1
     generation = g
-
     if not allHooked then TryHooks() end
-
     if selfDirty then
         inRaid    = IsInRaid()
         groupSize = inRaid and GetNumGroupMembers() or 0
@@ -607,10 +560,8 @@ local function Scan()
             selfDirty = false
         end
     end
-
     if not (inRaid and groupSize > SMALL_GROUP_SIZE) then
         local me = selfUnit
-
         local c = partyContainer
         if c and partyVis(c) then
             local frames = c.memberUnitFrames
@@ -632,20 +583,28 @@ local function Scan()
                 end
             end
         end
-
         c = raidContainer
         if c and raidVis(c) then
             local frames = c.frameUpdateList
             frames = frames and frames.normal
             if frames then
-                for i = 1, #frames do
-                    local frame = frames[i]
-                    local unit = frame.unit
-                    if unit and unit ~= me and frame:IsVisible() then Bind(frame, unit, g) end
+                local vis = raidMemberVis
+                if not vis then
+                    local f1 = frames[1]
+                    if f1 then
+                        vis           = f1.IsVisible
+                        raidMemberVis = vis
+                    end
+                end
+                if vis then
+                    for i = 1, #frames do
+                        local frame = frames[i]
+                        local unit  = frame.unit
+                        if unit and unit ~= me and vis(frame) then Bind(frame, unit, g) end
+                    end
                 end
             end
         end
-
         local p = standardParty
         if p and standardVis(p) then
             local pmf = partyMemberFrames
@@ -657,7 +616,6 @@ local function Scan()
             end
         end
     end
-
     local bnd = bound
     for i = boundCount, 1, -1 do
         local b = bnd[i]
@@ -665,7 +623,6 @@ local function Scan()
             ReleaseBar(b)
         end
     end
-
     forceResync = false
 end
 
@@ -677,12 +634,10 @@ end
 
 local function OnGroupEvent(self, event)
     selfDirty = true
-
     if event == "PLAYER_ENTERING_WORLD" then
         forceResync = true
         After(2, ScheduleScan)
     end
-
     ScheduleScan()
 end
 
@@ -694,5 +649,5 @@ PCB:SetScript("OnEvent", function(self)
     self:RegisterEvent("PLAYER_ENTERING_WORLD")
     ScheduleScan()
 end)
-
 PCB:RegisterEvent("PLAYER_LOGIN")
+
