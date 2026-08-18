@@ -1,7 +1,7 @@
 ## Interface: 120100
 ## Title: Party Cast Bars
 ## Notes: Cast bars for Blizzard's compact party/raid frames and the standard party frames
-## Version: 2.4.0
+## Version: 2.5.0
 ## Author: G1t-Happens
 ## IconTexture: Interface\Icons\Spell_Arcane_Arcane01
 ## Category: Combat
